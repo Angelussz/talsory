@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 
@@ -20,10 +21,19 @@ type MatrixResponse struct {
 	R [][]float64 `json:"r"`
 }
 
+type MatrixStats struct {
+	Max         float64 `json:"max"`
+	Min         float64 `json:"min"`
+	Average     float64 `json:"average"`
+	QIsDiagonal bool    `json:"qIsDiagonal"`
+	RIsDiagonal bool    `json:"rIsDiagonal"`
+}
+
 type FinalResponse struct {
-	Q       [][]float64 `json:"q"`
-	R       [][]float64 `json:"r"`
-	Warning string      `json:"warning"`
+	Q       [][]float64  `json:"q"`
+	R       [][]float64  `json:"r"`
+	Stats   *MatrixStats `json:"stats"`
+	Warning string       `json:"warning"`
 }
 
 // Convierte [][]float64 a un mat.Dense de gonum
@@ -68,31 +78,47 @@ func denseToSlice(m mat.Matrix) [][]float64 {
 	return result
 }
 
-// Envía el resultado Q y R al servidor de Node.js que los imprime
-func sendToNode(response MatrixResponse) string {
+// Obtiene las estadísticas de Q y R desde el servidor de Node.js
+func sendToNode(response MatrixResponse) (*MatrixStats, string) {
 	payload, err := json.Marshal(response)
 	if err != nil {
-		return "error al serializar el payload: " + err.Error()
+		return nil, "error al serializar el payload: " + err.Error()
 	}
 
-	req, err := http.NewRequest(http.MethodPost, "http://localhost:3001/print-qr", bytes.NewReader(payload))
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:3001/matrix-stats", bytes.NewReader(payload))
 	if err != nil {
-		return "error al crear la petición: " + err.Error()
+		return nil, "error al crear la petición: " + err.Error()
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "no se pudo conectar con el servidor de impresión: " + err.Error()
+		return nil, "no se pudo conectar con el servidor de stats: " + err.Error()
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return "el servidor de impresión respondió con estado: " + resp.Status
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "error al leer la respuesta del servidor de stats: " + err.Error()
 	}
 
-	return ""
+	if resp.StatusCode != http.StatusOK {
+		var errBody struct {
+			Error string `json:"error"`
+		}
+		if jsonErr := json.Unmarshal(body, &errBody); jsonErr == nil && errBody.Error != "" {
+			return nil, "el servidor de stats respondió con estado " + resp.Status + ": " + errBody.Error
+		}
+		return nil, "el servidor de stats respondió con estado: " + resp.Status
+	}
+
+	var stats MatrixStats
+	if err := json.Unmarshal(body, &stats); err != nil {
+		return nil, "error al decodificar las stats: " + err.Error()
+	}
+
+	return &stats, ""
 }
 
 func main() {
@@ -135,13 +161,14 @@ func main() {
 			R: denseToSlice(&r),
 		}
 
-		// 4. Enviar Q y R al servidor de Node.js para que los imprima
-		warning := sendToNode(response)
+		// 4. Enviar Q y R al servidor de Node.js para que calcule las stats
+		stats, warning := sendToNode(response)
 
 		// 5. Armar respuesta en formato array de arrays
 		final := FinalResponse{
 			Q:       response.Q,
 			R:       response.R,
+			Stats:   stats,
 			Warning: warning,
 		}
 
