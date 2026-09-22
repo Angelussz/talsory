@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"log"
+	"net/http"
 
 	"github.com/gofiber/fiber/v3"
 	"gonum.org/v1/gonum/mat"
@@ -15,6 +18,12 @@ type MatrixRequest struct {
 type MatrixResponse struct {
 	Q [][]float64 `json:"q"`
 	R [][]float64 `json:"r"`
+}
+
+type FinalResponse struct {
+	Q       [][]float64 `json:"q"`
+	R       [][]float64 `json:"r"`
+	Warning string      `json:"warning"`
 }
 
 // Convierte [][]float64 a un mat.Dense de gonum
@@ -59,6 +68,33 @@ func denseToSlice(m mat.Matrix) [][]float64 {
 	return result
 }
 
+// Envía el resultado Q y R al servidor de Node.js que los imprime
+func sendToNode(response MatrixResponse) string {
+	payload, err := json.Marshal(response)
+	if err != nil {
+		return "error al serializar el payload: " + err.Error()
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:3001/print-qr", bytes.NewReader(payload))
+	if err != nil {
+		return "error al crear la petición: " + err.Error()
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "no se pudo conectar con el servidor de impresión: " + err.Error()
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "el servidor de impresión respondió con estado: " + resp.Status
+	}
+
+	return ""
+}
+
 func main() {
 	app := fiber.New()
 
@@ -94,17 +130,22 @@ func main() {
 		qr.QTo(&q)
 		qr.RTo(&r)
 
-		// 4. Armar respuesta en formato array de arrays
 		response := MatrixResponse{
 			Q: denseToSlice(&q),
 			R: denseToSlice(&r),
 		}
 
-		// Nota: Si vas a enviar estos datos a la API de Node.js,
-		// aquí es donde harías la llamada HTTP a Node usando http.Post()
-		// o el cliente HTTP que prefieras.
+		// 4. Enviar Q y R al servidor de Node.js para que los imprima
+		warning := sendToNode(response)
 
-		return c.Status(fiber.StatusOK).JSON(response)
+		// 5. Armar respuesta en formato array de arrays
+		final := FinalResponse{
+			Q:       response.Q,
+			R:       response.R,
+			Warning: warning,
+		}
+
+		return c.Status(fiber.StatusOK).JSON(final)
 	})
 
 	log.Fatal(app.Listen(":3000"))
