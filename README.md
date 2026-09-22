@@ -30,13 +30,18 @@ talsory/
 ├── factorizacion_qr/        # Backend en Go
 │   ├── main.go              # Endpoint /factorize-qr + integración con Node
 │   ├── go.mod / go.sum
+│   ├── Dockerfile
+│   ├── .dockerignore
 │   └── .env.example
 ├── extra_operations/        # Servidor Node.js
 │   ├── src/
 │   │   ├── index.ts         # Endpoints HTTP
 │   │   └── matrix.ts        # max, min, average, isDiagonal, validaciones
 │   ├── package.json
+│   ├── Dockerfile
+│   ├── .dockerignore
 │   └── .env.example
+├── docker-compose.yml       # Orquestación de ambos contenedores
 └── .gitignore
 ```
 
@@ -44,6 +49,7 @@ talsory/
 
 - **Go** 1.27 o superior ([descargar](https://go.dev/dl/))
 - **Node.js** 24 o superior (para soporte de `node --env-file`) ([descargar](https://nodejs.org/))
+- **Docker** con Docker Compose (para correr con contenedores) ([Docker Desktop](https://www.docker.com/products/docker-desktop/))
 
 ## Instalación (proyecto clonado)
 
@@ -101,6 +107,81 @@ talsory/
    ```
 
    Escucha en `http://localhost:3000` (o el valor de `PORT`).
+
+> **Alternativa:** si prefieres no instalar Go/Node, corre todo con contenedores — ver [Docker / Contenedores](#docker--contenedores).
+
+## Docker / Contenedores
+
+El proyecto incluye un `docker-compose.yml` que levanta **dos contenedores separados**:
+
+- **`extra_operations`** (Node): interno y sin puerto publicado en el host. Incluye un *healthcheck* que verifica que el servidor responda.
+- **`factorizacion_qr`** (Go): único servicio publicado en el host, en el puerto `3000`.
+
+Los dos contenedores se comunican por la **red interna de Docker Compose**; Go alcanza a Node usando el nombre del servicio (`http://extra_operations:3001/matrix-stats`). Dentro de un contenedor **no** se usa `localhost` para hablar con otro servicio, porque `localhost` sería el propio contenedor: la URL interna se resuelve por nombre de servicio.
+
+El `docker-compose.yml`:
+
+```yaml
+services:
+  extra_operations:
+    build: ./extra_operations
+    environment:
+      PORT: 3001
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  factorizacion_qr:
+    build: ./factorizacion_qr
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      NODE_STATS_URL: http://extra_operations:3001/matrix-stats
+    depends_on:
+      extra_operations:
+        condition: service_healthy
+```
+
+- `build: ./...` indica qué Dockerfile usar para cada servicio.
+- `environment:` define las variables dentro del contenedor (no usa tu `.env` local).
+- `healthcheck`: cada 5s hace un `fetch` al `/` de Node; sin respuesta en 3s cuenta como fallo, y tras 10 intentos el contenedor pasa a `unhealthy`.
+- `depends_on` con `condition: service_healthy`: Go **no arranca** hasta que el healthcheck de Node confirme que está respondiendo.
+
+### Cómo correr
+
+Desde la raíz del proyecto (donde está `docker-compose.yml`):
+
+```bash
+docker compose up --build   # primera vez, o cuando cambies código/Dockerfiles
+docker compose up           # siguientes veces, si no cambió nada
+```
+
+| Comando                          | Qué hace                                     |
+|----------------------------------|----------------------------------------------|
+| `docker compose up --build`      | Construye las imágenes y levanta el stack    |
+| `docker compose up`              | Levanta con las imágenes ya construidas      |
+| `docker compose down`            | Para y elimina los contenedores              |
+| `docker compose logs -f`         | Muestra los logs en vivo                     |
+| `docker compose ps`              | Estado de los contenedores y healthchecks    |
+
+> **`--build` o no:** la primera vez siempre es `--build` (aún no hay imágenes). Después, si modificaste `main.go`, `src/` o los `Dockerfile`, vuelve a usar `--build` para que la imagen se reconstruya; si no cambió nada, `docker compose up` alcanza. Usar siempre `--build` no hace daño.
+
+Cuando el stack esté arriba, prueba el flujo completo:
+
+```bash
+curl -X POST http://localhost:3000/factorize-qr \
+  -H "Content-Type: application/json" \
+  -d '{"matrix":[[1,2],[3,4]]}'
+```
+
+### Variables de entorno en Docker
+
+En contenedores **no se usa el `.env` local** (ignorado por `.dockerignore`). La configuración vive en el bloque `environment:` del compose. Esto funciona porque tanto `godotenv` (Go) como el flag `--env-file-if-exists` (Node) ignoran la ausencia de `.env` y respetan las variables ya definidas en el entorno del contenedor.
+
+> **Advertencia:** si tienes instancias locales corriendo (`go run .` o `npm run dev`), ciérralas antes de `docker compose up` para evitar conflictos por puertos ya ocupados.
 
 ## Endpoints
 

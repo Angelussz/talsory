@@ -1,0 +1,21 @@
+services:
+  extra_operations:
+    build: ./extra_operations
+    environment:
+      PORT: 3001
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  factorizacion_qr:
+    build: ./factorizacion_qr
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      NODE_STATS_URL: http://extra_operations:3001/matrix-stats
+    depends_on:
+      extra_operations:
+        condition: service_healthy
