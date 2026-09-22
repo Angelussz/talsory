@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: talsory-extra-operations
+    runtime: docker
+    repo: https://github.com/Angelussz/talsory
+    rootDir: extra_operations
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: "3001"
+
+  - type: web
+    name: talsory-factorizacion-qr
+    runtime: docker
+    repo: https://github.com/Angelussz/talsory
+    rootDir: factorizacion_qr
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: "3000"
+      - key: NODE_STATS_URL
+        fromService:
+          name: talsory-extra-operations
+          type: web
+          property: host

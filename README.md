@@ -41,7 +41,8 @@ talsory/
 │   ├── Dockerfile
 │   ├── .dockerignore
 │   └── .env.example
-├── docker-compose.yml       # Orquestación de ambos contenedores
+├── docker-compose.yml       # Orquestación de ambos contenedores en Docker
+├── render.yaml              # Blueprint de despliegue en Render
 └── .gitignore
 ```
 
@@ -182,6 +183,63 @@ curl -X POST http://localhost:3000/factorize-qr \
 En contenedores **no se usa el `.env` local** (ignorado por `.dockerignore`). La configuración vive en el bloque `environment:` del compose. Esto funciona porque tanto `godotenv` (Go) como el flag `--env-file-if-exists` (Node) ignoran la ausencia de `.env` y respetan las variables ya definidas en el entorno del contenedor.
 
 > **Advertencia:** si tienes instancias locales corriendo (`go run .` o `npm run dev`), ciérralas antes de `docker compose up` para evitar conflictos por puertos ya ocupados.
+
+## Despliegue en Render
+
+El proyecto está desplegado en **Render** usando el archivo [`render.yaml`](./render.yaml) (Render Blueprint). Render no lee `docker-compose.yml`, por lo que este archivo define los dos servicios de manera equivalente, construyéndolos con sus Dockerfiles (`runtime: docker`).
+
+```yaml
+services:
+  - type: web
+    name: talsory-extra-operations
+    runtime: docker
+    repo: https://github.com/Angelussz/talsory
+    rootDir: extra_operations
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: "3001"
+
+  - type: web
+    name: talsory-factorizacion-qr
+    runtime: docker
+    repo: https://github.com/Angelussz/talsory
+    rootDir: factorizacion_qr
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: "3000"
+      - key: NODE_STATS_URL
+        fromService:
+          name: talsory-extra-operations
+          type: web
+          property: host
+```
+
+- Cada servicio se construye desde la raíz de su carpeta (`rootDir`) usando su `Dockerfile`.
+- `healthCheckPath: /` usa el endpoint raíz de cada servicio como sonda de salud.
+- `NODE_STATS_URL` se resuelve automáticamente con `fromService`: Render inyecta el host público de `talsory-extra-operations`; la app Go agrega `/matrix-stats` si falta, así el flujo de stats funciona sin configurar la URL manualmente.
+
+### Cómo se desplegó
+
+1. El repositorio está en GitHub (requisito de Render).
+2. En render.com → **New +** → **Blueprint** → conectar GitHub → seleccionar el repo `talsory`.
+3. Render detectó `render.yaml` y creó ambos servicios con autodeploy: cada `git push` a la rama principal vuelve a desplegar.
+4. URLs resultantes:
+   - Go (entrada pública): `https://talsory-factorizacion-qr.onrender.com`
+   - Node (stats, interno de la app): `https://talsory-extra-operations.onrender.com`
+
+### Prueba del despliegue
+
+```bash
+curl -X POST https://talsory-factorizacion-qr.onrender.com/factorize-qr \
+  -H "Content-Type: application/json" \
+  -d '{"matrix":[[1,2],[3,4]]}'
+```
+
+La respuesta debe incluir `stats` poblado (`max`, `min`, `average`, `qIsDiagonal`, `rIsDiagonal`).
 
 ## Endpoints
 

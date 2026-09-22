@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/joho/godotenv"
@@ -134,6 +135,9 @@ func main() {
 	statsURL := os.Getenv("NODE_STATS_URL")
 	if statsURL == "" {
 		statsURL = "http://localhost:3001/matrix-stats"
+	}
+	if !strings.HasSuffix(statsURL, "/matrix-stats") {
+		statsURL += "/matrix-stats"
 	}
 
 	app := fiber.New()
