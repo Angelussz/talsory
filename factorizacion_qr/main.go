@@ -135,9 +135,14 @@ func main() {
 	statsURL := os.Getenv("NODE_STATS_URL")
 	if statsURL == "" {
 		statsURL = "http://localhost:3001/matrix-stats"
-	}
-	if !strings.HasSuffix(statsURL, "/matrix-stats") {
-		statsURL += "/matrix-stats"
+	} else {
+		if !strings.HasPrefix(statsURL, "http://") && !strings.HasPrefix(statsURL, "https://") {
+			statsURL = "https://" + statsURL
+		}
+		statsURL = strings.TrimRight(statsURL, "/")
+		if !strings.HasSuffix(statsURL, "/matrix-stats") {
+			statsURL += "/matrix-stats"
+		}
 	}
 
 	app := fiber.New()

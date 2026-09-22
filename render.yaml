@@ -24,4 +24,4 @@ services:
         fromService:
           name: talsory-extra-operations
           type: web
-          property: host
+          envVarKey: RENDER_EXTERNAL_HOSTNAME
