@@ -7,8 +7,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/joho/godotenv"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -79,13 +81,13 @@ func denseToSlice(m mat.Matrix) [][]float64 {
 }
 
 // Obtiene las estadísticas de Q y R desde el servidor de Node.js
-func sendToNode(response MatrixResponse) (*MatrixStats, string) {
+func sendToNode(statsURL string, response MatrixResponse) (*MatrixStats, string) {
 	payload, err := json.Marshal(response)
 	if err != nil {
 		return nil, "error al serializar el payload: " + err.Error()
 	}
 
-	req, err := http.NewRequest(http.MethodPost, "http://localhost:3001/matrix-stats", bytes.NewReader(payload))
+	req, err := http.NewRequest(http.MethodPost, statsURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, "error al crear la petición: " + err.Error()
 	}
@@ -122,6 +124,18 @@ func sendToNode(response MatrixResponse) (*MatrixStats, string) {
 }
 
 func main() {
+	_ = godotenv.Load()
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3000"
+	}
+
+	statsURL := os.Getenv("NODE_STATS_URL")
+	if statsURL == "" {
+		statsURL = "http://localhost:3001/matrix-stats"
+	}
+
 	app := fiber.New()
 
 	app.Get("/", func(c fiber.Ctx) error {
@@ -162,7 +176,7 @@ func main() {
 		}
 
 		// 4. Enviar Q y R al servidor de Node.js para que calcule las stats
-		stats, warning := sendToNode(response)
+		stats, warning := sendToNode(statsURL, response)
 
 		// 5. Armar respuesta en formato array de arrays
 		final := FinalResponse{
@@ -175,5 +189,5 @@ func main() {
 		return c.Status(fiber.StatusOK).JSON(final)
 	})
 
-	log.Fatal(app.Listen(":3000"))
+	log.Fatal(app.Listen(":" + port))
 }
